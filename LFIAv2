@@ -1,0 +1,77 @@
+from IPython import get_ipython
+from IPython.display import display
+# %%
+import pandas as pd
+import numpy as np
+from google.colab import files
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+
+# Tenta carregar o arquivo do armazenamento da sessão
+try:
+    df = pd.read_excel('Lotofácil.xlsx')
+except FileNotFoundError:
+    # Se o arquivo não for encontrado, solicita o upload
+    print("O arquivo 'Lotofácil.xlsx' não foi encontrado no armazenamento da sessão.")
+    uploaded = files.upload()
+    if 'Lotofácil.xlsx' in uploaded:
+        df = pd.read_excel('Lotofácil.xlsx')
+    else:
+        raise FileNotFoundError("O arquivo 'Lotofácil.xlsx' não foi carregado.")
+
+# Função para gerar um jogo simples (aleatório)
+def gerar_jogo_aleatorio():
+    return np.random.choice(range(1, 26), size=15, replace=False)
+
+# Função para gerar um jogo com peso e repetições, com a condição de 12 ou 13 pontos
+def gerar_jogo_com_peso_e_repeticoes_condicionado(df, num_concursos=10, pontos_minimos=12):
+    while True:
+        jogo = gerar_jogo_com_peso_e_repeticoes(df, num_concursos)
+        # Verifica a condição de pontos mínimos nos últimos 10 concursos
+        ultimos_concursos = df.tail(num_concursos).select_dtypes(include=np.number)
+        pontos = 0
+        for index in ultimos_concursos.index:
+            jogo_concurso = set(ultimos_concursos.loc[index].values)  # Corrigido: Usar .loc para acessar a linha pelo índice
+            pontos_concurso = len(set(jogo) & jogo_concurso)
+            if pontos_concurso >= pontos_minimos:
+                pontos += 1
+        if pontos > 0:  # Ajustado para verificar se há pelo menos um jogo com mais de 12 pontos nos últimos 10 concursos.
+            return jogo
+
+# Função para gerar um jogo com peso e repetições (original)
+def gerar_jogo_com_peso_e_repeticoes(df, num_concursos=10):
+    # Calcula as 9 dezenas mais frequentes nos últimos 10 concursos
+    ultimos_concursos = df.tail(num_concursos).select_dtypes(include=np.number)
+    dezenas_repetidas = ultimos_concursos.stack().value_counts().head(9).index.tolist()
+
+    # Calcula a probabilidade de cada número ser sorteado
+    probabilidades = df.select_dtypes(include=np.number).stack().value_counts() / df.select_dtypes(include=np.number).stack().shape[0]
+
+    # Cria um dicionário com probabilidades para todos os números de 1 a 25
+    all_probabilidades = {i: probabilidades.get(i, 0) for i in range(1, 26)}
+
+    # Adiciona peso às dezenas que aparecem com mais frequência em combinações de 9 números
+    for dezena in dezenas_repetidas:
+        all_probabilidades[dezena] *= 1.2
+
+    # Converte o dicionário para um array de probabilidades na ordem correta
+    probabilidades_ordenadas = np.array([all_probabilidades[i] for i in range(1, 26)])
+
+    # Normaliza as probabilidades
+    probabilidades_ordenadas /= probabilidades_ordenadas.sum()
+
+    # Gera um jogo com base nas probabilidades
+    return np.random.choice(range(1, 26), size=15, replace=False, p=probabilidades_ordenadas)
+
+# Gerar e salvar os jogos, com a condição
+jogos_gerados = []
+for _ in range(7):
+    jogo = gerar_jogo_com_peso_e_repeticoes_condicionado(df, pontos_minimos=12)  # Usando a função com a condição
+    jogos_gerados.append(jogo)
+
+df_jogos = pd.DataFrame(jogos_gerados)
+df_jogos.to_excel('jogos_gerados.xlsx', index=False)
+print("Jogos gerados salvos em jogos_gerados.xlsx")
+
+# ... (código para treinar e avaliar o modelo - opcional) ...
