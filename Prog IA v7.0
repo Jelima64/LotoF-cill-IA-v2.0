@@ -1,0 +1,178 @@
+import pandas as pd
+import random
+import numpy as np
+from collections import Counter
+from google.colab import files
+
+# Funções auxiliares
+def gerar_jogo_lotofacil(dezenas_disponiveis):
+    return random.sample(dezenas_disponiveis, 15)
+
+def gerar_jogo_com_peso_frequencia_lotofacil(frequencia):
+    dezenas = np.array(list(frequencia.keys()))
+    pesos = np.array(list(frequencia.values()))
+    pesos_normalizados = pesos / pesos.sum()
+    return np.random.choice(dezenas, size=15, replace=False, p=pesos_normalizados).tolist()
+
+def gerar_jogo_com_peso_digitos(dezenas_disponiveis, frequencia_digitos):
+    pesos = []
+    for dezena in dezenas_disponiveis:
+        digito = dezena % 10
+        peso = frequencia_digitos.get(digito, 0) + 1
+        pesos.append(peso)
+    pesos_normalizados = np.array(pesos) / sum(pesos)
+    return np.random.choice(dezenas_disponiveis, size=15, replace=False, p=pesos_normalizados).tolist()
+
+def gerar_jogo_condicionado_lotofacil(df, num_concursos=50, pontos_minimos=11, dezenas_disponiveis=None, jogos_existentes=None):
+    while True:
+        jogo = gerar_jogo_lotofacil(dezenas_disponiveis)
+        if jogos_existentes is not None and jogo in jogos_existentes:
+            continue
+        ultimos_concursos = df.tail(num_concursos)
+        jogo_valido = False
+        for index in ultimos_concursos.index:
+            numeros_concurso = [valor for valor in ultimos_concursos.loc[index].values if isinstance(valor, (int, np.integer)) and 1 <= valor <= 25]
+            if len(set(jogo) & set(numeros_concurso)) >= pontos_minimos:
+                jogo_valido = True
+                break
+        if jogo_valido:
+            return jogo
+
+def imprimir_jogos(jogos):
+    if not jogos:
+        print("Nenhum jogo atendeu aos critérios.")
+        return
+    for i, jogo in enumerate(jogos):
+        jogo.sort()
+        print(f"Jogo {i+1}: {jogo}")
+
+def analisar_ultimos_digitos(df, num_concursos=30):
+    ultimos_concursos = df.tail(num_concursos)
+    ultimos_digitos = []
+    for index in ultimos_concursos.index:
+        numeros_concurso = [valor for valor in ultimos_concursos.loc[index].values if isinstance(valor, (int, np.integer)) and 1 <= valor <= 25]
+        for numero in numeros_concurso:
+            ultimos_digitos.append(numero % 10)
+    return Counter(ultimos_digitos)
+
+def aplicar_regra_digitos(jogos, frequencia_digitos, num_concursos_analise):
+    jogos_filtrados = []
+    for jogo in jogos:
+        digitos_jogo = [numero % 10 for numero in jogo]
+        contagem_digitos = Counter(digitos_jogo)
+
+        valido = True
+        for digito, contagem in contagem_digitos.items():
+            # Filtro de dígitos relaxado (multiplicador aumentado para 2.0)
+            if contagem > (frequencia_digitos.get(digito, 0) / num_concursos_analise) * 2.0:  
+                valido = False
+                break
+        if valido:
+            jogos_filtrados.append(jogo)
+    return jogos_filtrados
+
+def aplicar_regra_grupos(jogos, quantidade_jogos):
+    grupo_a = [2, 4, 5, 8, 10, 11, 12, 14, 15, 17, 18, 20, 22, 24, 25]
+    grupo_b = [1, 3, 6, 7, 9, 13, 16, 19, 21, 23]
+
+    jogos_filtrados = []
+    # Composições de grupos expandidas
+    composicoes = [(10, 5)] * 2 + [(9, 6)] * 3 + [(8, 7)] * 2 + [(7, 8)] * 2 + [(6, 9)] * 3 + [(5, 10)] *2  
+    random.shuffle(composicoes)
+
+    while len(jogos_filtrados) < quantidade_jogos:
+        for composicao in composicoes:
+            while True:
+                novo_jogo = gerar_jogo_lotofacil(list(range(1, 26)))
+                contagem_a = sum(1 for dezena in novo_jogo if dezena in grupo_a)
+                contagem_b = sum(1 for dezena in novo_jogo if dezena in grupo_b)
+
+                if (contagem_a, contagem_b) == composicao and novo_jogo not in jogos_filtrados:
+                    jogos_filtrados.append(novo_jogo)
+                    if len(jogos_filtrados) == quantidade_jogos:
+                        return jogos_filtrados
+                    break
+    return jogos_filtrados
+
+# Parâmetros configuráveis
+num_concursos_analise = 30
+quantidade_de_jogos = 7
+
+try:
+    df = pd.read_excel('Lotofácil.xlsx')
+except FileNotFoundError:
+    print("Arquivo 'Lotofácil.xlsx' não encontrado. Faça o upload:")
+    uploaded = files.upload()
+    if 'Lotofácil.xlsx' in uploaded:
+        df = pd.read_excel('Lotofácil.xlsx')
+    else:
+        raise FileNotFoundError("Arquivo 'Lotofácil.xlsx' não foi carregado.")
+
+colunas_dezenas = [coluna for coluna in df.columns if all(isinstance(valor, (int, np.integer)) and 1 <= valor <= 25 or pd.isna(valor) for valor in df[coluna])]
+df_dezenas = df[colunas_dezenas]
+df_ultimos_concursos = df_dezenas.tail(num_concursos_analise)
+dezenas_disponiveis = list(set(df_ultimos_concursos.stack().dropna().tolist()))
+frequencia_dezenas = Counter(df_ultimos_concursos.stack().dropna().tolist())
+dezenas_disponiveis_total = list(range(1, 26))
+
+# Análise dos últimos dígitos
+frequencia_ultimos_digitos = analisar_ultimos_digitos(df_dezenas, num_concursos_analise)
+print(f"\nFrequência dos últimos dígitos nos últimos {num_concursos_analise} concursos:\n{frequencia_ultimos_digitos}")
+
+# Gerar jogos com peso nos dígitos (aplicando regra de grupos)
+meus_jogos_digitos = []
+while len(meus_jogos_digitos) < quantidade_de_jogos:
+    novo_jogo = gerar_jogo_com_peso_digitos(dezenas_disponiveis_total, frequencia_ultimos_digitos)
+    if novo_jogo not in meus_jogos_digitos:
+        meus_jogos_digitos.append(novo_jogo)
+print("\nJogos com Peso nos Dígitos (Aplicando Regra de Grupos):")
+meus_jogos_digitos = aplicar_regra_grupos(meus_jogos_digitos, quantidade_de_jogos)
+imprimir_jogos(meus_jogos_digitos)
+
+# Gerar jogos com peso na frequência (aplicando regra de grupos e dígitos)
+meus_jogos_frequencia = []
+while len(meus_jogos_frequencia) < quantidade_de_jogos:
+    novo_jogo = gerar_jogo_com_peso_frequencia_lotofacil(frequencia_dezenas)
+    if novo_jogo not in meus_jogos_frequencia:
+        meus_jogos_frequencia.append(novo_jogo)
+
+print("\nJogos com Peso na Frequência (Antes das Regras):")
+imprimir_jogos(meus_jogos_frequencia)
+
+print("\nJogos com Peso na Frequência (Após Regra de Grupos):")
+meus_jogos_frequencia = aplicar_regra_grupos(meus_jogos_frequencia, quantidade_de_jogos)
+imprimir_jogos(meus_jogos_frequencia)
+
+print("\nJogos com Peso na Frequência (Após Regra de Dígitos):")
+meus_jogos_frequencia = aplicar_regra_digitos(meus_jogos_frequencia, frequencia_ultimos_digitos, num_concursos_analise)
+imprimir_jogos(meus_jogos_frequencia)
+
+# Gerar jogos condicionados (aplicando regra de grupos)
+meus_jogos_condicionados = []
+while len(meus_jogos_condicionados) < quantidade_de_jogos:
+    novo_jogo = gerar_jogo_condicionado_lotofacil(df_dezenas, num_concursos=num_concursos_analise, pontos_minimos=11, dezenas_disponiveis=dezenas_disponiveis)
+    if novo_jogo not in meus_jogos_condicionados:
+        meus_jogos_condicionados.append(novo_jogo)
+print("\nJogos Condicionados (Aplicando Regra de Grupos):")
+meus_jogos_condicionados = aplicar_regra_grupos(meus_jogos_condicionados, quantidade_de_jogos)
+imprimir_jogos(meus_jogos_condicionados)
+
+# Gerar jogos aleatórios (aplicando regra de grupos)
+meus_jogos_aleatorios = []
+while len(meus_jogos_aleatorios) < quantidade_de_jogos:
+    novo_jogo = random.sample(range(1, 26), 15)
+    if novo_jogo not in meus_jogos_aleatorios:
+        meus_jogos_aleatorios.append(novo_jogo)
+print("\nJogos Aleatórios (Aplicando Regra de Grupos):")
+meus_jogos_aleatorios = aplicar_regra_grupos(meus_jogos_aleatorios, quantidade_de_jogos)
+imprimir_jogos(meus_jogos_aleatorios)
+
+total_jogos_condicionados = len(meus_jogos_condicionados)
+print(f"\nTotal de jogos condicionados únicos gerados: {total_jogos_condicionados}")
+
+frequencia_jogos_condicionados = Counter([numero for jogo in meus_jogos_condicionados for numero in jogo])
+dezena_mais_frequente = frequencia_jogos_condicionados.most_common(1)
+print(f"\nDezena mais frequente nos jogos condicionados: {dezena_mais_frequente}")
+
+print(f"\nDezenas disponíveis usadas para os jogos condicionados (últimos {num_concursos_analise} concursos): {sorted(dezenas_disponiveis)}")
+print(f"\nFrequência das dezenas nos últimos {num_concursos_analise} concursos: {frequencia_dezenas}")
