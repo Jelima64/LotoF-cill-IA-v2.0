@@ -1,0 +1,217 @@
+!pip install tqdm
+
+import pandas as pd
+import random
+import numpy as np
+from collections import Counter
+from tqdm import tqdm  # Importa tqdm para a barra de progresso
+try:
+    from google.colab import files
+except ImportError:
+    pass
+
+# Funções auxiliares
+def gerar_jogo_lotofacil(dezenas_disponiveis, dezenas_fixas=[], dezenas_excluidas=[]):
+    dezenas_disponiveis = [dezena for dezena in dezenas_disponiveis if dezena not in dezenas_fixas and dezena not in dezenas_excluidas]
+    if len(dezenas_disponiveis) < 15 - len(dezenas_fixas):
+        return None
+    dezenas_restantes = random.sample(dezenas_disponiveis, 15 - len(dezenas_fixas))
+    jogo = dezenas_fixas + dezenas_restantes
+    return jogo
+
+def gerar_jogo_com_peso_frequencia_lotofacil(frequencia, dezenas_fixas=[], dezenas_excluidas=[]):  
+    dezenas_disponiveis = [dezena for dezena in list(frequencia.keys()) if dezena not in dezenas_fixas and dezena not in dezenas_excluidas]
+    if len(dezenas_disponiveis) < 15 - len(dezenas_fixas):
+        return None  # Não há dezenas suficientes para gerar o jogo
+    
+    dezenas = np.array(dezenas_disponiveis)
+    pesos = np.array([frequencia[dezena] for dezena in dezenas_disponiveis])
+    pesos_normalizados = pesos / pesos.sum()
+    
+    dezenas_sorteadas = np.random.choice(dezenas, size=15 - len(dezenas_fixas), replace=False, p=pesos_normalizados).tolist()
+    
+    jogo = sorted(dezenas_fixas + dezenas_sorteadas)
+    return jogo
+
+def gerar_jogo_com_peso_digitos(dezenas_disponiveis, frequencia_digitos, dezenas_fixas=[], dezenas_excluidas=[]):
+    dezenas_disponiveis_filtradas = [dezena for dezena in dezenas_disponiveis if dezena not in dezenas_fixas and dezena not in dezenas_excluidas]
+    
+    if len(dezenas_disponiveis_filtradas) < 15 - len(dezenas_fixas):
+        return None
+    
+    pesos = []
+    for dezena in dezenas_disponiveis_filtradas:
+        digito = dezena % 10
+        peso = frequencia_digitos.get(digito, 0) + 1
+        pesos.append(peso)
+    pesos_normalizados = np.array(pesos) / sum(pesos)
+    
+    dezenas_sorteadas = np.random.choice(dezenas_disponiveis_filtradas, size=15 - len(dezenas_fixas), replace=False, p=pesos_normalizados).tolist()
+    
+    jogo = sorted(dezenas_fixas + dezenas_sorteadas)
+    return jogo
+
+
+def gerar_jogo_condicionado_lotofacil(df, num_concursos=50, pontos_minimos=11, dezenas_disponiveis=None, jogos_existentes=None, dezenas_fixas=[], dezenas_excluidas=[]):
+    while True:
+        jogo = gerar_jogo_lotofacil(dezenas_disponiveis, dezenas_fixas, dezenas_excluidas)
+        if jogo is None:
+            continue # Pula para a próxima iteração se o jogo não for válido
+            
+        if jogos_existentes is not None and jogo in jogos_existentes:
+            continue
+        ultimos_concursos = df.tail(num_concursos)
+        jogo_valido = False
+        for index in ultimos_concursos.index:
+            numeros_concurso = [valor for valor in ultimos_concursos.loc[index].values if isinstance(valor, (int, np.integer)) and 1 <= valor <= 25]
+            if len(set(jogo) & set(numeros_concurso)) >= pontos_minimos:
+                jogo_valido = True
+                break
+        if jogo_valido:
+            return jogo
+
+def imprimir_jogos(jogos):
+    if not jogos:
+        print("Nenhum jogo atendeu aos critérios.")
+        return
+    for i, jogo in enumerate(jogos):
+        jogo.sort()
+        print(f"Jogo {i+1}: {jogo}")
+
+def analisar_ultimos_digitos(df, num_concursos=30):
+    ultimos_concursos = df.tail(num_concursos)
+    ultimos_digitos = []
+    for index in ultimos_concursos.index:
+        numeros_concurso = [valor for valor in ultimos_concursos.loc[index].values if isinstance(valor, (int, np.integer)) and 1 <= valor <= 25]
+        for numero in numeros_concurso:
+            ultimos_digitos.append(numero % 10)
+    return Counter(ultimos_digitos)
+
+def aplicar_regra_digitos(jogos, frequencia_digitos, num_concursos_analise, dezenas_fixas=[], dezenas_excluidas=[]):
+    jogos_filtrados = []
+    for jogo in jogos:
+        # Verifique se o jogo atende aos critérios de dezenas fixas e excluídas
+        if all(dezena_fixa in jogo for dezena_fixa in dezenas_fixas) and all(dezena_excluida not in jogo for dezena_excluida in dezenas_excluidas):
+            digitos_jogo = [numero % 10 for numero in jogo]
+            contagem_digitos = Counter(digitos_jogo)
+            valido = True
+            for digito, contagem in contagem_digitos.items():
+                if contagem > (frequencia_digitos.get(digito, 0) / num_concursos_analise) * 2.0:
+                    valido = False
+                    break
+            if valido:
+                jogos_filtrados.append(jogo)
+    return jogos_filtrados
+
+
+def aplicar_regra_grupos(jogos, quantidade_jogos, dezenas_fixas=[], dezenas_excluidas=[]):
+    grupo_a = [1, 3, 4, 5, 6, 7, 10, 12, 14, 15, 16, 17, 18, 20, 23]
+    grupo_b = [2, 8, 9, 11, 13, 19, 21, 22, 24, 25]
+
+    jogos_filtrados = []
+    composicoes = [(10, 5)] * 2 + [(11, 4)] * 3 + [(9, 6)] * 2 + [(10, 5)] * 2 + [(11, 4)] * 3 + [(12, 3)] * 2
+    random.shuffle(composicoes)
+
+    while len(jogos_filtrados) < quantidade_jogos:
+        for composicao in composicoes:
+            while True:
+                novo_jogo = gerar_jogo_lotofacil(list(range(1, 26)), dezenas_fixas, dezenas_excluidas)
+                if novo_jogo is None:
+                    continue
+                contagem_a = sum(1 for dezena in novo_jogo if dezena in grupo_a)
+                contagem_b = sum(1 for dezena in novo_jogo if dezena in grupo_b)
+
+                if (contagem_a, contagem_b) == composicao and novo_jogo not in jogos_filtrados:
+                    jogos_filtrados.append(novo_jogo)
+                    if len(jogos_filtrados) == quantidade_jogos:
+                        return jogos_filtrados
+                    break
+    return jogos_filtrados
+
+# Parâmetros configuráveis
+num_concursos_analise = 30
+quantidade_de_jogos = 7
+dezenas_fixas = [1, 10]  # Dezenas que você quer fixar em todos os jogos
+dezenas_excluidas = [2, 3, 4]  # Dezenas que você quer excluir de todos os jogos
+
+try:
+    df = pd.read_excel('Lotofácil.xlsx')
+except FileNotFoundError:
+    print("Arquivo 'Lotofácil.xlsx' não encontrado. Faça o upload:")
+    try:
+        uploaded = files.upload()
+        if 'Lotofácil.xlsx' in uploaded:
+            df = pd.read_excel('Lotofácil.xlsx')
+        else:
+            raise FileNotFoundError("Arquivo 'Lotofácil.xlsx' não foi carregado.")
+    except NameError:  # Caso files.upload() não esteja disponível
+        raise FileNotFoundError("O upload de arquivos não está disponível neste ambiente.")
+
+colunas_dezenas = [coluna for coluna in df.columns if all(isinstance(valor, (int, np.integer)) and 1 <= valor <= 25 or pd.isna(valor) for valor in df[coluna])]
+df_dezenas = df[colunas_dezenas]
+df_ultimos_concursos = df_dezenas.tail(num_concursos_analise)
+dezenas_disponiveis = list(set(df_ultimos_concursos.stack().dropna().tolist()))
+frequencia_dezenas = Counter(df_ultimos_concursos.stack().dropna().tolist())
+dezenas_disponiveis_total = list(range(1, 26))
+
+# Análise dos últimos dígitos
+frequencia_ultimos_digitos = analisar_ultimos_digitos(df_dezenas, num_concursos_analise)
+print(f"\nFrequência dos últimos dígitos nos últimos {num_concursos_analise} concursos:\n{frequencia_ultimos_digitos}")
+
+# Gerar jogos com peso nos dígitos (aplicando regra de grupos)
+meus_jogos_digitos = []
+while len(meus_jogos_digitos) < quantidade_de_jogos:
+    novo_jogo = gerar_jogo_com_peso_digitos(dezenas_disponiveis_total, frequencia_ultimos_digitos, dezenas_fixas, dezenas_excluidas)
+    if novo_jogo is not None and novo_jogo not in meus_jogos_digitos:
+        meus_jogos_digitos.append(novo_jogo)
+print("\nJogos com Peso nos Dígitos (Aplicando Regra de Grupos):")
+meus_jogos_digitos = aplicar_regra_grupos(meus_jogos_digitos, quantidade_de_jogos, dezenas_fixas, dezenas_excluidas)
+imprimir_jogos(meus_jogos_digitos)
+
+# Gerar jogos com peso na frequência (aplicando regra de grupos e dígitos)
+meus_jogos_frequencia = []
+while len(meus_jogos_frequencia) < quantidade_de_jogos:
+    novo_jogo = gerar_jogo_com_peso_frequencia_lotofacil(frequencia_dezenas, dezenas_fixas, dezenas_excluidas)
+    if novo_jogo is not None and novo_jogo not in meus_jogos_frequencia:
+        meus_jogos_frequencia.append(novo_jogo)
+
+print("\nJogos com Peso na Frequência (Antes das Regras):")
+imprimir_jogos(meus_jogos_frequencia)
+
+print("\nJogos com Peso na Frequência (Após Regra de Grupos):")
+meus_jogos_frequencia = aplicar_regra_grupos(meus_jogos_frequencia, quantidade_de_jogos, dezenas_fixas, dezenas_excluidas)
+imprimir_jogos(meus_jogos_frequencia)
+
+print("\nJogos com Peso na Frequência (Após Regra de Dígitos):")
+meus_jogos_frequencia = aplicar_regra_digitos(meus_jogos_frequencia, frequencia_ultimos_digitos, num_concursos_analise, dezenas_fixas, dezenas_excluidas)
+imprimir_jogos(meus_jogos_frequencia)
+
+# Gerar jogos condicionados (aplicando regra de grupos)
+meus_jogos_condicionados = []
+while len(meus_jogos_condicionados) < quantidade_de_jogos:
+    novo_jogo = gerar_jogo_condicionado_lotofacil(df_dezenas, num_concursos=num_concursos_analise, pontos_minimos=11, dezenas_disponiveis=dezenas_disponiveis, dezenas_fixas=dezenas_fixas, dezenas_excluidas=dezenas_excluidas)
+    if novo_jogo is not None and novo_jogo not in meus_jogos_condicionados:
+        meus_jogos_condicionados.append(novo_jogo)
+print("\nJogos Condicionados (Aplicando Regra de Grupos):")
+meus_jogos_condicionados = aplicar_regra_grupos(meus_jogos_condicionados, quantidade_de_jogos, dezenas_fixas, dezenas_excluidas)
+imprimir_jogos(meus_jogos_condicionados)
+
+# Gerar jogos aleatórios (aplicando regra de grupos)
+meus_jogos_aleatorios = []
+while len(meus_jogos_aleatorios) < quantidade_de_jogos:
+    novo_jogo = gerar_jogo_lotofacil(list(range(1, 26)), dezenas_fixas, dezenas_excluidas)
+    if novo_jogo is not None and novo_jogo not in meus_jogos_aleatorios:
+        meus_jogos_aleatorios.append(novo_jogo)
+print("\nJogos Aleatórios (Aplicando Regra de Grupos):")
+meus_jogos_aleatorios = aplicar_regra_grupos(meus_jogos_aleatorios, quantidade_de_jogos, dezenas_fixas, dezenas_excluidas)
+imprimir_jogos(meus_jogos_aleatorios)
+
+total_jogos_condicionados = len(meus_jogos_condicionados)
+print(f"\nTotal de jogos condicionados únicos gerados: {total_jogos_condicionados}")
+
+frequencia_jogos_condicionados = Counter([numero for jogo in meus_jogos_condicionados for numero in jogo])
+dezena_mais_frequente = frequencia_jogos_condicionados.most_common(1)
+print(f"\nDezena mais frequente nos jogos condicionados: {dezena_mais_frequente}")
+
+print(f"\nDezenas disponíveis usadas para os jogos condicionados (últimos {num_concursos_analise} concursos): {sorted(dezenas_disponiveis)}")
+print(f"\nFrequência das dezenas nos últimos {num_concursos_analise} concursos: {frequencia_dezenas}")
