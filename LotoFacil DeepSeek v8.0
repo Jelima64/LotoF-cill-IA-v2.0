@@ -1,0 +1,242 @@
+# Instalação de bibliotecas (se necessário)
+!pip install tqdm pandas numpy openpyxl
+
+# Importações
+import pandas as pd
+import random
+import numpy as np
+from collections import Counter
+from tqdm import tqdm  # Para barra de progresso
+
+try:
+    from google.colab import files  # Para uso no Google Colab
+except ImportError:
+    pass
+
+# Função para gerar um jogo da Lotofácil
+def gerar_jogo_lotofacil(dezenas_disponiveis, dezenas_fixas=[], dezenas_excluidas=[]):
+    """
+    Gera um jogo da Lotofácil com base nas dezenas disponíveis, fixas e excluídas.
+    """
+    # Filtra dezenas disponíveis, removendo fixas e excluídas
+    dezenas_disponiveis = [
+        dezena for dezena in dezenas_disponiveis
+        if dezena not in dezenas_fixas and dezena not in dezenas_excluidas
+    ]
+
+    # Verifica se há dezenas suficientes para gerar o jogo
+    if len(dezenas_disponiveis) < 15 - len(dezenas_fixas):
+        return None
+
+    # Sorteia as dezenas restantes
+    dezenas_restantes = random.sample(dezenas_disponiveis, 15 - len(dezenas_fixas))
+
+    # Retorna o jogo ordenado
+    return sorted(dezenas_fixas + dezenas_restantes)
+
+# Função para gerar jogos com peso na frequência das dezenas
+def gerar_jogo_com_peso_frequencia(frequencia, dezenas_fixas=[], dezenas_excluidas=[]):
+    """
+    Gera um jogo da Lotofácil com base na frequência das dezenas.
+    """
+    dezenas_disponiveis = [
+        dezena for dezena in frequencia.keys()
+        if dezena not in dezenas_fixas and dezena not in dezenas_excluidas
+    ]
+
+    if len(dezenas_disponiveis) < 15 - len(dezenas_fixas):
+        return None
+
+    # Normaliza os pesos
+    dezenas = np.array(dezenas_disponiveis)
+    pesos = np.array([frequencia[dezena] for dezena in dezenas_disponiveis])
+    pesos_normalizados = pesos / pesos.sum()
+
+    # Sorteia as dezenas com base nos pesos
+    dezenas_sorteadas = np.random.choice(dezenas, size=15 - len(dezenas_fixas), replace=False, p=pesos_normalizados).tolist()
+
+    # Retorna o jogo ordenado
+    return sorted(dezenas_fixas + dezenas_sorteadas)
+
+# Função para calcular atrasos das dezenas
+def calcular_atrasos(df, num_concursos=10):
+    """
+    Calcula o número de concursos que cada dezena está atrasada.
+    """
+    atrasos = {dezena: 0 for dezena in range(1, 26)}  # Inicializa atrasos para todas as dezenas
+
+    # Itera sobre os últimos concursos
+    for concurso in df.tail(num_concursos).values:
+        for dezena in range(1, 26):
+            if dezena in concurso:
+                atrasos[dezena] = 0  # Reinicia o atraso se a dezena apareceu
+            else:
+                atrasos[dezena] += 1  # Incrementa o atraso se a dezena não apareceu
+
+    return atrasos
+
+# Função para calcular frequências das dezenas
+def calcular_frequencias(df, num_concursos=10):
+    """
+    Calcula a frequência de cada dezena nos últimos concursos.
+    """
+    frequencias = {dezena: 0 for dezena in range(1, 26)}  # Inicializa frequências para todas as dezenas
+
+    # Itera sobre os últimos concursos
+    for concurso in df.tail(num_concursos).values:
+        for dezena in concurso:
+            if isinstance(dezena, (int, np.integer)) and 1 <= dezena <= 25:
+                frequencias[dezena] += 1
+
+    return frequencias
+
+# Função para selecionar dezenas prioritárias
+def selecionar_dezenas_prioritarias(atrasos, frequencias, num_concursos=10):
+    """
+    Seleciona dezenas prioritárias com base em atrasos e frequências.
+    """
+    # Dezenas com atraso maior que 3 concursos
+    dezenas_atrasadas = [dezena for dezena, atraso in atrasos.items() if atraso > 3]
+
+    # Dezenas com frequência igual ou maior que 80%
+    frequencia_minima = num_concursos * 0.8
+    dezenas_frequentes = [dezena for dezena, freq in frequencias.items() if freq >= frequencia_minima]
+
+    # Combina as duas listas, removendo duplicatas
+    dezenas_prioritarias = list(set(dezenas_atrasadas + dezenas_frequentes))
+
+    return dezenas_prioritarias
+
+# Função para aplicar regras de grupos
+def aplicar_regra_grupos(jogos, quantidade_jogos, dezenas_fixas=[], dezenas_excluidas=[]):
+    """
+    Aplica a regra de grupos para gerar jogos balanceados.
+    """
+    grupo_a = {1, 3, 4, 5, 7, 9, 10, 11, 12, 14, 15, 19, 20, 21, 23}  # Sorteada
+    grupo_b = {2, 6, 8, 13, 16, 17, 18, 22, 24, 25}  # Ausentes
+
+    # Composições possíveis de grupos A e B
+    composicoes = [(7, 8)] * 2 + [(8, 7)] * 3 + [(11, 4)] * 2 + [(10, 5)] * 2 + [(9, 6)] * 3 + [(10, 5)] * 2
+    random.shuffle(composicoes)
+
+    jogos_filtrados = []
+    tentativas_maximas = 1000  # Limite de tentativas para evitar loop infinito
+    tentativas = 0
+
+    while len(jogos_filtrados) < quantidade_jogos and tentativas < tentativas_maximas:
+        for composicao in composicoes:
+            while True:
+                novo_jogo = gerar_jogo_lotofacil(range(1, 26), dezenas_fixas, dezenas_excluidas)
+                if novo_jogo is None:
+                    continue
+
+                # Conta quantas dezenas estão em cada grupo
+                contagem_a = sum(1 for dezena in novo_jogo if dezena in grupo_a)
+                contagem_b = sum(1 for dezena in novo_jogo if dezena in grupo_b)
+
+                # Verifica se o jogo atende à composição desejada
+                if (contagem_a, contagem_b) == composicao and novo_jogo not in jogos_filtrados:
+                    jogos_filtrados.append(novo_jogo)
+                    break
+
+                tentativas += 1
+                if tentativas >= tentativas_maximas:
+                    break
+
+            if len(jogos_filtrados) == quantidade_jogos or tentativas >= tentativas_maximas:
+                break
+
+    return jogos_filtrados
+
+# Função para calcular a soma das dezenas de um jogo
+def calcular_soma_dezenas(jogo):
+    return sum(jogo)
+
+# Função para calcular o intervalo de soma das dezenas dos últimos concursos
+def calcular_intervalo_soma(df, num_concursos=10):
+    """
+    Calcula o intervalo mínimo e máximo da soma das dezenas dos últimos concursos.
+    """
+    ultimos_concursos = df.tail(num_concursos)
+    somas = [calcular_soma_dezenas([valor for valor in linha if isinstance(valor, (int, np.integer)) and 1 <= valor <= 25]) for linha in ultimos_concursos.values]
+    return min(somas), max(somas)
+
+# Função para filtrar jogos dentro do intervalo de soma
+def filtrar_jogos_por_soma(jogos, soma_min, soma_max):
+    """
+    Filtra os jogos que estão dentro do intervalo de soma das dezenas.
+    """
+    return [jogo for jogo in jogos if soma_min <= calcular_soma_dezenas(jogo) <= soma_max]
+
+# Função para exportar jogos para Excel
+def exportar_jogos_para_excel(jogos, nome_arquivo="jogos_lotofacil.xlsx"):
+    """
+    Exporta os jogos gerados para um arquivo Excel.
+    """
+    df_jogos = pd.DataFrame(jogos, columns=[f"Dezena {i+1}" for i in range(15)])
+    df_jogos.to_excel(nome_arquivo, index=False)
+    print(f"Jogos exportados para {nome_arquivo}")
+
+# Função principal para gerar e analisar jogos
+def main():
+    # Parâmetros configuráveis
+    num_concursos_analise = 30
+    quantidade_de_jogos = 10
+    dezenas_fixas = [2, 17]  # Dezenas fixas
+    dezenas_excluidas = [4, 9, 19]  # Dezenas excluídas
+
+    # Carregar dados históricos
+    try:
+        df = pd.read_excel('Lotofácil.xlsx')
+    except FileNotFoundError:
+        print("Arquivo 'Lotofácil.xlsx' não encontrado. Faça o upload:")
+        try:
+            uploaded = files.upload()
+            if 'Lotofácil.xlsx' in uploaded:
+                df = pd.read_excel('Lotofácil.xlsx')
+            else:
+                raise FileNotFoundError("Arquivo 'Lotofácil.xlsx' não foi carregado.")
+        except NameError:
+            raise FileNotFoundError("O upload de arquivos não está disponível neste ambiente.")
+
+    # Filtrar colunas de dezenas
+    colunas_dezenas = [coluna for coluna in df.columns if all(isinstance(valor, (int, np.integer)) and 1 <= valor <= 25 or pd.isna(valor) for valor in df[coluna])]
+    df_dezenas = df[colunas_dezenas]
+
+    # Calcular atrasos e frequências
+    atrasos = calcular_atrasos(df_dezenas, num_concursos=10)
+    frequencias = calcular_frequencias(df_dezenas, num_concursos=10)
+
+    # Selecionar dezenas prioritárias
+    dezenas_prioritarias = selecionar_dezenas_prioritarias(atrasos, frequencias, num_concursos=10)
+    print(f"\nDezenas prioritárias (atrasadas ou frequentes): {sorted(dezenas_prioritarias)}")
+
+    # Adicionar dezenas prioritárias às dezenas fixas
+    dezenas_fixas = list(set(dezenas_fixas + dezenas_prioritarias))
+    print(f"Dezenas fixas atualizadas: {sorted(dezenas_fixas)}")
+
+    # Gerar jogos com peso na frequência
+    jogos_frequencia = []
+    while len(jogos_frequencia) < quantidade_de_jogos:
+        jogo = gerar_jogo_com_peso_frequencia(frequencias, dezenas_fixas, dezenas_excluidas)
+        if jogo is not None and jogo not in jogos_frequencia:
+            jogos_frequencia.append(jogo)
+
+    # Aplicar regra de grupos
+    jogos_frequencia = aplicar_regra_grupos(jogos_frequencia, quantidade_de_jogos, dezenas_fixas, dezenas_excluidas)
+
+    # Filtrar jogos dentro do intervalo de soma
+    soma_min, soma_max = calcular_intervalo_soma(df_dezenas, num_concursos=10)
+    jogos_frequencia = filtrar_jogos_por_soma(jogos_frequencia, soma_min, soma_max)
+
+    # Exportar jogos para Excel
+    exportar_jogos_para_excel(jogos_frequencia)
+
+    # Exibir jogos gerados na tela
+    print("\nJogos gerados com sucesso!")
+    for i, jogo in enumerate(jogos_frequencia):
+        print(f"Jogo {i+1}: {jogo} (Soma: {calcular_soma_dezenas(jogo)})")
+
+# Executar a função principal
+if __name__ == "__main__":
+    main()
