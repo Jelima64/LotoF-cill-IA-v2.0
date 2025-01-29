@@ -1,0 +1,171 @@
+# Instalação de bibliotecas (se necessário)
+!pip install tqdm pandas numpy openpyxl
+
+# Importações
+import pandas as pd
+import random
+import numpy as np
+from collections import Counter
+from tqdm import tqdm
+
+try:
+    from google.colab import files
+except ImportError:
+    pass
+
+# Função para gerar um jogo da Lotofácil
+def gerar_jogo_lotofacil(dezenas_disponiveis, dezenas_fixas=[], dezenas_excluidas=[]):
+    """
+    Gera um jogo da Lotofácil com base nas dezenas disponíveis, fixas e excluídas.
+    """
+    # Filtra dezenas disponíveis, removendo fixas e excluídas
+    dezenas_disponiveis = [
+        dezena for dezena in dezenas_disponiveis
+        if dezena not in dezenas_fixas and dezena not in dezenas_excluidas
+    ]
+
+    # Verifica se há dezenas suficientes para gerar o jogo
+    if len(dezenas_disponiveis) < 15 - len(dezenas_fixas):
+        return None
+
+    # Sorteia as dezenas restantes
+    dezenas_restantes = random.sample(dezenas_disponiveis, 15 - len(dezenas_fixas))
+
+    # Retorna o jogo ordenado
+    return sorted(dezenas_fixas + dezenas_restantes)
+
+# Função para calcular estatísticas avançadas
+def calcular_estatisticas_avancadas(df, num_concursos=30):
+    """
+    Calcula frequência, atrasos e tendências recentes das dezenas.
+    """
+    estatisticas = {
+        'frequencia': Counter(),
+        'atrasos': {dezena: 0 for dezena in range(1, 26)},
+        'tendencia_recente': Counter(),
+    }
+
+    # Últimos N concursos
+    ultimos_concursos = df.tail(num_concursos).values
+    
+    for i, concurso in enumerate(ultimos_concursos):
+        concurso = [d for d in concurso if isinstance(d, (int, np.integer)) and 1 <= d <= 25]
+        
+        # Atualiza frequência
+        estatisticas['frequencia'].update(concurso)
+        
+        # Atualiza tendência recente (últimos 5 concursos)
+        if i >= num_concursos - 5:
+            estatisticas['tendencia_recente'].update(concurso)
+        
+        # Atualiza atrasos
+        for dezena in range(1, 26):
+            if dezena in concurso:
+                estatisticas['atrasos'][dezena] = 0
+            else:
+                estatisticas['atrasos'][dezena] += 1
+
+    return estatisticas
+
+# Função para selecionar dezenas prioritárias
+def selecionar_dezenas_prioritarias(estatisticas):
+    """
+    Seleciona dezenas com base em atrasos, frequência e tendência recente.
+    """
+    scores = {dezena: 0 for dezena in range(1, 26)}
+    
+    for dezena in range(1, 26):
+        # Peso para atrasos (maior peso para atrasos entre 4 e 8 concursos)
+        if 4 <= estatisticas['atrasos'][dezena] <= 8:
+            scores[dezena] += 3
+        elif estatisticas['atrasos'][dezena] > 8:
+            scores[dezena] += 1
+            
+        # Peso para frequência equilibrada (20-60% dos concursos)
+        freq_relativa = estatisticas['frequencia'][dezena] / len(estatisticas['frequencia'])
+        if 0.2 <= freq_relativa <= 0.6:
+            scores[dezena] += 4
+        elif freq_relativa > 0.6:
+            scores[dezena] += 2
+            
+        # Peso para tendência recente
+        scores[dezena] += estatisticas['tendencia_recente'][dezena] * 2
+    
+    # Seleciona as 8 melhores dezenas
+    return sorted([dezena for dezena, score in sorted(scores.items(), key=lambda x: -x[1])][:8])
+
+# Função para gerar jogos otimizados
+def gerar_jogos_otimizados(estatisticas, dezenas_fixas=[], dezenas_excluidas=[], quantidade_jogos=5, max_tentativas=1000):
+    """
+    Gera jogos otimizados com base em estatísticas.
+    """
+    jogos_gerados = []
+    tentativas = 0
+
+    while len(jogos_gerados) < quantidade_jogos and tentativas < max_tentativas:
+        jogo = gerar_jogo_lotofacil(range(1, 26), dezenas_fixas, dezenas_excluidas)
+        if jogo and jogo not in jogos_gerados:
+            # Verifica se o jogo atende a critérios básicos
+            linhas = [0] * 5
+            colunas = [0] * 5
+            for d in jogo:
+                linhas[(d - 1) // 5] += 1
+                colunas[(d - 1) % 5] += 1
+
+            # Balanceamento de linhas e colunas
+            if max(linhas) <= 4 and min(linhas) >= 2 and max(colunas) <= 4 and min(colunas) >= 2:
+                jogos_gerados.append(jogo)
+        
+        tentativas += 1
+
+    return jogos_gerados
+
+# Função para exportar jogos para Excel
+def exportar_jogos_para_excel(jogos, nome_arquivo="jogos_lotofacil.xlsx"):
+    """
+    Exporta os jogos gerados para um arquivo Excel.
+    """
+    df_jogos = pd.DataFrame(jogos, columns=[f"Dezena {i+1}" for i in range(15)])
+    df_jogos.to_excel(nome_arquivo, index=False)
+    print(f"Jogos exportados para {nome_arquivo}")
+
+# Função principal
+def main():
+    # Parâmetros
+    num_concursos_analise = 30  # Número de concursos para análise
+    quantidade_jogos = 5        # Quantidade de jogos a gerar
+    dezenas_fixas = []          # Dezenas fixas (opcional)
+    dezenas_excluidas = []      # Dezenas excluídas (opcional)
+
+    # Carregar dados
+    try:
+        df = pd.read_excel('Lotofácil.xlsx')
+    except FileNotFoundError:
+        print("Arquivo 'Lotofácil.xlsx' não encontrado. Faça o upload:")
+        uploaded = files.upload()
+        if 'Lotofácil.xlsx' in uploaded:
+            df = pd.read_excel('Lotofácil.xlsx')
+        else:
+            print("Arquivo 'Lotofácil.xlsx' não foi carregado.")
+            return
+
+    # Calcular estatísticas avançadas
+    estatisticas = calcular_estatisticas_avancadas(df, num_concursos_analise)
+    
+    # Selecionar dezenas prioritárias
+    dezenas_prioritarias = selecionar_dezenas_prioritarias(estatisticas)
+    print(f"Dezenas prioritárias: {dezenas_prioritarias}")
+    
+    # Gerar jogos otimizados
+    jogos_gerados = gerar_jogos_otimizados(estatisticas, dezenas_prioritarias, dezenas_excluidas, quantidade_jogos)
+    
+    # Exportar jogos para Excel
+    exportar_jogos_para_excel(jogos_gerados)
+    
+    # Exibir jogos gerados
+    print("\nJogos gerados com sucesso:")
+    for i, jogo in enumerate(jogos_gerados):
+        print(f"Jogo {i+1}: {jogo}")
+
+if __name__ == "__main__":
+    main()
