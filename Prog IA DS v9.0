@@ -1,0 +1,146 @@
+# Instalação de bibliotecas (se necessário)
+!pip install tqdm pandas numpy openpyxl
+
+# Importações
+import pandas as pd
+import random
+import numpy as np
+from collections import Counter
+from tqdm import tqdm
+
+try:
+    from google.colab import files
+except ImportError:
+    pass
+
+# Função para gerar um jogo da Lotofácil
+def gerar_jogo_lotofacil(dezenas_disponiveis, dezenas_fixas=[], dezenas_excluidas=[]):
+    """
+    Gera um jogo da Lotofácil com base nas dezenas disponíveis, fixas e excluídas.
+    """
+    # Filtra dezenas disponíveis, removendo fixas e excluídas
+    dezenas_disponiveis = [
+        dezena for dezena in dezenas_disponiveis
+        if dezena not in dezenas_fixas and dezena not in dezenas_excluidas
+    ]
+
+    # Verifica se há dezenas suficientes para gerar o jogo
+    if len(dezenas_disponiveis) < 15 - len(dezenas_fixas):
+        return None
+
+    # Sorteia as dezenas restantes
+    dezenas_restantes = random.sample(dezenas_disponiveis, 15 - len(dezenas_fixas))
+
+    # Retorna o jogo ordenado
+    return sorted(dezenas_fixas + dezenas_restantes)
+
+# Função para calcular a frequência das dezenas na primeira e quinta linha
+def calcular_frequencias_linhas(df, num_concursos=1000):
+    """
+    Calcula a frequência de cada dezena nas primeiras e últimas linhas dos últimos concursos.
+    """
+    frequencias_primeira_linha = {dezena: 0 for dezena in range(1, 26)}
+    frequencias_quinta_linha = {dezena: 0 for dezena in range(1, 26)}
+
+    # Itera sobre os últimos concursos
+    for concurso in df.head(num_concursos).values:
+        primeira_linha = concurso[:5]  # Primeira linha: dezenas 1 a 5
+        quinta_linha = concurso[-5:]  # Quinta linha: dezenas 21 a 25
+
+        for dezena in primeira_linha:
+            if isinstance(dezena, (int, np.integer)) and 1 <= dezena <= 25:
+                frequencias_primeira_linha[dezena] += 1
+
+        for dezena in quinta_linha:
+            if isinstance(dezena, (int, np.integer)) and 1 <= dezena <= 25:
+                frequencias_quinta_linha[dezena] += 1
+
+    return frequencias_primeira_linha, frequencias_quinta_linha
+
+# Função para gerar jogos com base na frequência das dezenas nas linhas
+def gerar_jogo_com_peso_frequencia_linhas(frequencias_primeira_linha, frequencias_quinta_linha, dezenas_fixas=[], dezenas_excluidas=[], prioridade="ambas"):
+    """
+    Gera um jogo da Lotofácil com base na frequência das dezenas nas primeiras e últimas linhas.
+    """
+    dezenas_disponiveis = [
+        dezena for dezena in range(1, 26)
+        if dezena not in dezenas_fixas and dezena not in dezenas_excluidas
+    ]
+
+    if len(dezenas_disponiveis) < 15 - len(dezenas_fixas):
+        return None
+
+    # Define os pesos com base na prioridade
+    if prioridade == "primeira":
+        pesos = np.array([frequencias_primeira_linha[dezena] for dezena in dezenas_disponiveis])
+    elif prioridade == "quinta":
+        pesos = np.array([frequencias_quinta_linha[dezena] for dezena in dezenas_disponiveis])
+    else:  # "ambas"
+        pesos = np.array([frequencias_primeira_linha[dezena] + frequencias_quinta_linha[dezena] for dezena in dezenas_disponiveis])
+
+    # Normaliza os pesos
+    pesos_normalizados = pesos / pesos.sum()
+
+    # Sorteia as dezenas com base nos pesos
+    dezenas_sorteadas = np.random.choice(dezenas_disponiveis, size=15 - len(dezenas_fixas), replace=False, p=pesos_normalizados).tolist()
+
+    # Retorna o jogo ordenado
+    return sorted(dezenas_fixas + dezenas_sorteadas)
+
+# Função para exportar jogos para Excel
+def exportar_jogos_para_excel(jogos, nome_arquivo="jogos_lotofacil.xlsx"):
+    """
+    Exporta os jogos gerados para um arquivo Excel.
+    """
+    df_jogos = pd.DataFrame(jogos, columns=[f"Dezena {i+1}" for i in range(15)])
+    df_jogos.to_excel(nome_arquivo, index=False)
+    print(f"Jogos exportados para {nome_arquivo}")
+
+# Função principal para gerar e analisar jogos
+def main():
+    # Parâmetros configuráveis
+    num_concursos_analise = 1000  # Número de concursos para análise
+    quantidade_de_jogos = 10      # Quantidade de jogos a gerar
+    dezenas_fixas = [4, 20]       # Dezenas fixas
+    dezenas_excluidas = [10, 11, 18]  # Dezenas excluídas
+    prioridade = "ambas"          # Prioridade: "primeira", "quinta" ou "ambas"
+
+    # Carregar dados históricos
+    try:
+        df = pd.read_excel('Lotofácil.xlsx')
+    except FileNotFoundError:
+        print("Arquivo 'Lotofácil.xlsx' não encontrado. Faça o upload:")
+        try:
+            uploaded = files.upload()
+            if 'Lotofácil.xlsx' in uploaded:
+                df = pd.read_excel('Lotofácil.xlsx')
+            else:
+                raise FileNotFoundError("Arquivo 'Lotofácil.xlsx' não foi carregado.")
+        except NameError:
+            raise FileNotFoundError("O upload de arquivos não está disponível neste ambiente.")
+
+    # Filtrar colunas de dezenas
+    colunas_dezenas = [coluna for coluna in df.columns if all(isinstance(valor, (int, np.integer)) and 1 <= valor <= 25 or pd.isna(valor) for valor in df[coluna])]
+    df_dezenas = df[colunas_dezenas]
+
+    # Calcular frequências nas primeiras e últimas linhas
+    frequencias_primeira_linha, frequencias_quinta_linha = calcular_frequencias_linhas(df_dezenas, num_concursos=num_concursos_analise)
+
+    # Gerar jogos com peso na frequência
+    jogos_frequencia = []
+    while len(jogos_frequencia) < quantidade_de_jogos:
+        jogo = gerar_jogo_com_peso_frequencia_linhas(frequencias_primeira_linha, frequencias_quinta_linha, dezenas_fixas, dezenas_excluidas, prioridade)
+        if jogo is not None and jogo not in jogos_frequencia:
+            jogos_frequencia.append(jogo)
+
+    # Exportar jogos para Excel
+    exportar_jogos_para_excel(jogos_frequencia)
+
+    # Exibir jogos gerados na tela
+    print("\nJogos gerados com sucesso!")
+    for i, jogo in enumerate(jogos_frequencia):
+        print(f"Jogo {i+1}: {jogo}")
+
+# Executar a função principal
+if __name__ == "__main__":
+    main()
